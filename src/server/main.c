@@ -266,6 +266,116 @@ static int run_stream_server(int port, struct user_list *users)
     return 0;
 }
 
+static int run_dgram_server(int port, struct user_list *users)
+{
+    int server_fd;
+    struct sockaddr_in server_addr;
+    struct sockaddr_in client_addr;
+    socklen_t client_len;
+    char request_buffer[REQUEST_SIZE];
+    char response_buffer[RESPONSE_SIZE];
+
+    if (setup_signals() != 0)
+    {
+        log_error("failed to setup signals");
+        return 1;
+    }
+
+    server_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server_fd < 0)
+    {
+        log_error("dgram socket failed");
+        return 1;
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons((uint16_t)port);
+
+    if (bind(server_fd, (struct sockaddr *)&server_addr,
+             sizeof(server_addr)) < 0)
+    {
+        log_error("dgram bind failed");
+        close(server_fd);
+        return 1;
+    }
+
+    log_info("dgram server pid %d listening on port %d", getpid(), port);
+
+    while (!need_stop)
+    {
+        struct rpc_request request;
+        char command_result[RESULT_SIZE];
+        int command_code;
+        ssize_t bytes_read;
+
+        if (need_reload)
+        {
+            need_reload = 0;
+            reload_users(users);
+        }
+
+        memset(request_buffer, 0, sizeof(request_buffer));
+        memset(response_buffer, 0, sizeof(response_buffer));
+        memset(command_result, 0, sizeof(command_result));
+
+        client_len = sizeof(client_addr);
+
+        bytes_read = recvfrom(server_fd, request_buffer,
+                              sizeof(request_buffer) - 1, 0,
+                              (struct sockaddr *)&client_addr, &client_len);
+
+        if (bytes_read < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            log_error("recvfrom failed");
+            continue;
+        }
+
+        request_buffer[bytes_read] = '\0';
+
+        if (parse_request(request_buffer, &request) != 0)
+        {
+            build_response(response_buffer, sizeof(response_buffer), 1,
+                           "invalid request format");
+            sendto(server_fd, response_buffer, strlen(response_buffer), 0,
+                   (struct sockaddr *)&client_addr, client_len);
+            continue;
+        }
+
+        log_info("dgram request from user=%s command=%s",
+                 request.login, request.command);
+
+        if (!is_user_allowed(users, request.login))
+        {
+            build_response(response_buffer, sizeof(response_buffer), 1,
+                           "user is not allowed");
+            sendto(server_fd, response_buffer, strlen(response_buffer), 0,
+                   (struct sockaddr *)&client_addr, client_len);
+            continue;
+        }
+
+        command_code = execute_command(request.command, command_result,
+                                       sizeof(command_result));
+
+        build_response(response_buffer, sizeof(response_buffer), command_code,
+                       command_result);
+
+        sendto(server_fd, response_buffer, strlen(response_buffer), 0,
+               (struct sockaddr *)&client_addr, client_len);
+    }
+
+    close(server_fd);
+    log_info("dgram server stopped");
+
+    return 0;
+}
+
 int main(void)
 {
     struct server_config config;
@@ -298,9 +408,17 @@ int main(void)
         }
     }
 
-    if (config.socket_type != SOCKET_TYPE_STREAM)
+    if (config.socket_type == SOCKET_TYPE_STREAM)
     {
-        log_error("only stream socket is implemented now");
+        run_stream_server(config.port, &users);
+    }
+    else if (config.socket_type == SOCKET_TYPE_DGRAM)
+    {
+        run_dgram_server(config.port, &users);
+    }
+    else
+    {
+        log_error("unknown socket type");
         log_close();
         return 1;
     }

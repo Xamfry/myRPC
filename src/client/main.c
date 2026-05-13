@@ -32,7 +32,7 @@ static void print_help(const char *program_name)
     printf("      --help             Show this help\n");
 }
 
-static const char * get_current_username(void)
+static const char *get_current_username(void)
 {
     struct passwd *pw;
 
@@ -127,7 +127,7 @@ static int parse_arguments(int argc, char **argv, struct client_options *options
 }
 
 static int send_stream_request(const struct client_options *options,
-                    const char *request)
+                               const char *request)
 {
     int sock_fd;
     struct sockaddr_in server_addr;
@@ -194,6 +194,72 @@ static int send_stream_request(const struct client_options *options,
     return response.code;
 }
 
+static int send_dgram_request(const struct client_options *options,
+                              const char *request)
+{
+    int sock_fd;
+    struct sockaddr_in server_addr;
+    char response_buffer[RESPONSE_SIZE];
+    struct rpc_response response;
+    ssize_t bytes_read;
+    socklen_t server_len;
+
+    sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons((uint16_t)options->port);
+
+    if (inet_pton(AF_INET, options->host, &server_addr.sin_addr) <= 0)
+    {
+        perror("inet_pton");
+        close(sock_fd);
+        return 1;
+    }
+
+    if (sendto(sock_fd, request, strlen(request), 0,
+               (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("sendto");
+        close(sock_fd);
+        return 1;
+    }
+
+    memset(response_buffer, 0, sizeof(response_buffer));
+    server_len = sizeof(server_addr);
+
+    bytes_read = recvfrom(sock_fd, response_buffer,
+                          sizeof(response_buffer) - 1, 0,
+                          (struct sockaddr *)&server_addr, &server_len);
+
+    if (bytes_read <= 0)
+    {
+        perror("recvfrom");
+        close(sock_fd);
+        return 1;
+    }
+
+    response_buffer[bytes_read] = '\0';
+
+    if (parse_response(response_buffer, &response) != 0)
+    {
+        fprintf(stderr, "Error: invalid response format\n");
+        close(sock_fd);
+        return 1;
+    }
+
+    printf("server response code: %d\n", response.code);
+    printf("server response result: %s\n", response.result);
+
+    close(sock_fd);
+    return response.code;
+}
+
 int main(int argc, char **argv)
 {
     struct client_options options;
@@ -202,12 +268,6 @@ int main(int argc, char **argv)
 
     if (parse_arguments(argc, argv, &options) != 0)
     {
-        return 1;
-    }
-
-    if (options.socket_type != SOCKET_STREAM)
-    {
-        fprintf(stderr, "Only stream socket is implemented now\n");
         return 1;
     }
 
@@ -224,5 +284,16 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    return send_stream_request(&options, request);
+    if (options.socket_type == SOCKET_STREAM)
+    {
+        return send_stream_request(&options, request);
+    }
+
+    if (options.socket_type == SOCKET_DGRAM)
+    {
+        return send_dgram_request(&options, request);
+    }
+
+    fprintf(stderr, "Error: unknown socket type\n");
+    return 1;
 }
