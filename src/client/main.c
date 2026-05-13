@@ -1,12 +1,13 @@
 #include "../common/protocol.h"
-
+#include <arpa/inet.h>
 #include <getopt.h>
+#include <netinet/in.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
-
 #define SOCKET_STREAM 1
 #define SOCKET_DGRAM 2
 
@@ -18,8 +19,7 @@ struct client_options
     char *command;
 };
 
-static void
-print_help(const char *program_name)
+static void print_help(const char *program_name)
 {
     printf("Usage: %s [OPTIONS]\n", program_name);
     printf("\n");
@@ -32,8 +32,7 @@ print_help(const char *program_name)
     printf("      --help             Show this help\n");
 }
 
-static const char *
-get_current_username(void)
+static const char * get_current_username(void)
 {
     struct passwd *pw;
 
@@ -46,8 +45,7 @@ get_current_username(void)
     return pw->pw_name;
 }
 
-static int
-parse_arguments(int argc, char **argv, struct client_options *options)
+static int parse_arguments(int argc, char **argv, struct client_options *options)
 {
     int opt;
     int option_index = 0;
@@ -128,6 +126,74 @@ parse_arguments(int argc, char **argv, struct client_options *options)
     return 0;
 }
 
+static int send_stream_request(const struct client_options *options,
+                    const char *request)
+{
+    int sock_fd;
+    struct sockaddr_in server_addr;
+    char response_buffer[RESPONSE_SIZE];
+    struct rpc_response response;
+    ssize_t bytes_read;
+
+    sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock_fd < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons((uint16_t)options->port);
+
+    if (inet_pton(AF_INET, options->host, &server_addr.sin_addr) <= 0)
+    {
+        perror("inet_pton");
+        close(sock_fd);
+        return 1;
+    }
+
+    if (connect(sock_fd, (struct sockaddr *)&server_addr,
+                sizeof(server_addr)) < 0)
+    {
+        perror("connect");
+        close(sock_fd);
+        return 1;
+    }
+
+    if (send(sock_fd, request, strlen(request), 0) < 0)
+    {
+        perror("send");
+        close(sock_fd);
+        return 1;
+    }
+
+    memset(response_buffer, 0, sizeof(response_buffer));
+
+    bytes_read = recv(sock_fd, response_buffer, sizeof(response_buffer) - 1, 0);
+    if (bytes_read <= 0)
+    {
+        perror("recv");
+        close(sock_fd);
+        return 1;
+    }
+
+    response_buffer[bytes_read] = '\0';
+
+    if (parse_response(response_buffer, &response) != 0)
+    {
+        fprintf(stderr, "Error: invalid response format\n");
+        close(sock_fd);
+        return 1;
+    }
+
+    printf("server response code: %d\n", response.code);
+    printf("server response result: %s\n", response.result);
+
+    close(sock_fd);
+    return response.code;
+}
+
 int main(int argc, char **argv)
 {
     struct client_options options;
@@ -136,6 +202,12 @@ int main(int argc, char **argv)
 
     if (parse_arguments(argc, argv, &options) != 0)
     {
+        return 1;
+    }
+
+    if (options.socket_type != SOCKET_STREAM)
+    {
+        fprintf(stderr, "Only stream socket is implemented now\n");
         return 1;
     }
 
@@ -152,7 +224,5 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("built request: %s\n", request);
-
-    return 0;
+    return send_stream_request(&options, request);
 }
