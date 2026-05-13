@@ -1,9 +1,7 @@
 #include "users.h"
-
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-
 #define LINE_SIZE 256
 
 static char * trim_spaces(char *str)

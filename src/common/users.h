@@ -1,6 +1,5 @@
 #ifndef MYRPC_USERS_H
 #define MYRPC_USERS_H
-
 #define MAX_USERS 128
 #define USERNAME_SIZE 64
 

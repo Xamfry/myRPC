@@ -1,6 +1,5 @@
 #ifndef MYRPC_CONFIG_H
 #define MYRPC_CONFIG_H
-
 #define SOCKET_TYPE_STREAM 1
 #define SOCKET_TYPE_DGRAM 2
 

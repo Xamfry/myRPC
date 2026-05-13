@@ -1,7 +1,11 @@
+#include "../common/protocol.h"
+
 #include <getopt.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define SOCKET_STREAM 1
 #define SOCKET_DGRAM 2
@@ -14,7 +18,8 @@ struct client_options
     char *command;
 };
 
-static void print_help(const char *program_name)
+static void
+print_help(const char *program_name)
 {
     printf("Usage: %s [OPTIONS]\n", program_name);
     printf("\n");
@@ -27,7 +32,22 @@ static void print_help(const char *program_name)
     printf("      --help             Show this help\n");
 }
 
-static int parse_arguments(int argc, char **argv, struct client_options *options)
+static const char *
+get_current_username(void)
+{
+    struct passwd *pw;
+
+    pw = getpwuid(getuid());
+    if (pw == NULL)
+    {
+        return NULL;
+    }
+
+    return pw->pw_name;
+}
+
+static int
+parse_arguments(int argc, char **argv, struct client_options *options)
 {
     int opt;
     int option_index = 0;
@@ -111,25 +131,28 @@ static int parse_arguments(int argc, char **argv, struct client_options *options
 int main(int argc, char **argv)
 {
     struct client_options options;
+    char request[REQUEST_SIZE];
+    const char *login;
 
     if (parse_arguments(argc, argv, &options) != 0)
     {
         return 1;
     }
 
-    printf("myRPC-client options:\n");
-    printf("  host: %s\n", options.host);
-    printf("  port: %d\n", options.port);
-    printf("  command: %s\n", options.command);
+    login = get_current_username();
+    if (login == NULL)
+    {
+        fprintf(stderr, "Error: failed to get current username\n");
+        return 1;
+    }
 
-    if (options.socket_type == SOCKET_STREAM)
+    if (build_request(request, sizeof(request), login, options.command) != 0)
     {
-        printf("  socket type: stream\n");
+        fprintf(stderr, "Error: failed to build request\n");
+        return 1;
     }
-    else if (options.socket_type == SOCKET_DGRAM)
-    {
-        printf("  socket type: dgram\n");
-    }
+
+    printf("built request: %s\n", request);
 
     return 0;
 }

@@ -1,8 +1,7 @@
 #include "../common/config.h"
+#include "../common/protocol.h"
 #include "../common/users.h"
-
 #include <stdio.h>
-
 #define DEFAULT_CONFIG_PATH "config/myRPC.conf"
 #define DEFAULT_USERS_PATH "config/users.conf"
 
@@ -10,6 +9,8 @@ int main(void)
 {
     struct server_config config;
     struct user_list users;
+    struct rpc_request request;
+    char test_request[REQUEST_SIZE] = "student:whoami";
 
     if (load_server_config(DEFAULT_CONFIG_PATH, &config) != 0)
     {
@@ -26,13 +27,23 @@ int main(void)
     print_server_config(&config);
     print_user_list(&users);
 
-    if (is_user_allowed(&users, "student"))
+    if (parse_request(test_request, &request) != 0)
     {
-        printf("test: user student is allowed\n");
+        fprintf(stderr, "Failed to parse test request\n");
+        return 1;
+    }
+
+    printf("parsed request:\n");
+    printf("  login: %s\n", request.login);
+    printf("  command: %s\n", request.command);
+
+    if (is_user_allowed(&users, request.login))
+    {
+        printf("user is allowed\n");
     }
     else
     {
-        printf("test: user student is denied\n");
+        printf("user is denied\n");
     }
 
     return 0;

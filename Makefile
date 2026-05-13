@@ -3,8 +3,8 @@ CFLAGS = -Wall -Wextra -Werror -std=c11
 
 BIN_DIR = bin
 
-COMMON_SRC = src/common/config.c src/common/users.c
-CLIENT_SRC = src/client/main.c
+COMMON_SRC = src/common/config.c src/common/users.c src/common/protocol.c
+CLIENT_SRC = src/client/main.c src/common/protocol.c
 SERVER_SRC = src/server/main.c $(COMMON_SRC)
 
 CLIENT_BIN = $(BIN_DIR)/myRPC-client
