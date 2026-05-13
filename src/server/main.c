@@ -14,8 +14,8 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#define DEFAULT_CONFIG_PATH "config/myRPC.conf"
-#define DEFAULT_USERS_PATH "config/users.conf"
+#define DEFAULT_CONFIG_PATH "/etc/myRPC/myRPC.conf"
+#define DEFAULT_USERS_PATH "/etc/myRPC/users.conf"
 #define BACKLOG 10
 
 static volatile sig_atomic_t need_stop = 0;
