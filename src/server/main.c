@@ -1,6 +1,8 @@
 #include "../common/config.h"
+#include "../common/log.h"
 #include "../common/protocol.h"
 #include "../common/users.h"
+#include "daemon.h"
 #include "worker.h"
 #include <arpa/inet.h>
 #include <errno.h>
@@ -16,6 +18,21 @@
 #define DEFAULT_USERS_PATH "config/users.conf"
 #define BACKLOG 10
 
+static volatile sig_atomic_t need_stop = 0;
+static volatile sig_atomic_t need_reload = 0;
+
+static void handle_sigint(int signo)
+{
+    (void)signo;
+    need_stop = 1;
+}
+
+static void handle_sighup(int signo)
+{
+    (void)signo;
+    need_reload = 1;
+}
+
 static void handle_sigchld(int signo)
 {
     (void)signo;
@@ -23,6 +40,48 @@ static void handle_sigchld(int signo)
     while (waitpid(-1, NULL, WNOHANG) > 0)
     {
     }
+}
+
+static int setup_signals(void)
+{
+    struct sigaction sa_int;
+    struct sigaction sa_hup;
+    struct sigaction sa_chld;
+
+    memset(&sa_int, 0, sizeof(sa_int));
+    sa_int.sa_handler = handle_sigint;
+    sigemptyset(&sa_int.sa_mask);
+
+    if (sigaction(SIGINT, &sa_int, NULL) < 0)
+    {
+        return 1;
+    }
+
+    if (sigaction(SIGTERM, &sa_int, NULL) < 0)
+    {
+        return 1;
+    }
+
+    memset(&sa_hup, 0, sizeof(sa_hup));
+    sa_hup.sa_handler = handle_sighup;
+    sigemptyset(&sa_hup.sa_mask);
+
+    if (sigaction(SIGHUP, &sa_hup, NULL) < 0)
+    {
+        return 1;
+    }
+
+    memset(&sa_chld, 0, sizeof(sa_chld));
+    sa_chld.sa_handler = handle_sigchld;
+    sigemptyset(&sa_chld.sa_mask);
+    sa_chld.sa_flags = SA_RESTART;
+
+    if (sigaction(SIGCHLD, &sa_chld, NULL) < 0)
+    {
+        return 1;
+    }
+
+    return 0;
 }
 
 static int handle_client(int client_fd, const struct user_list *users)
@@ -38,7 +97,7 @@ static int handle_client(int client_fd, const struct user_list *users)
     bytes_read = recv(client_fd, request_buffer, sizeof(request_buffer) - 1, 0);
     if (bytes_read <= 0)
     {
-        perror("recv");
+        log_error("recv failed");
         return 1;
     }
 
@@ -49,36 +108,55 @@ static int handle_client(int client_fd, const struct user_list *users)
         build_response(response_buffer, sizeof(response_buffer), 1,
                        "invalid request format");
         send(client_fd, response_buffer, strlen(response_buffer), 0);
+        log_error("invalid request format");
         return 1;
     }
 
-    printf("worker pid %d: request from user %s\n", getpid(), request.login);
-    printf("worker pid %d: command %s\n", getpid(), request.command);
+    log_info("worker pid %d: user=%s command=%s",
+             getpid(), request.login, request.command);
 
     if (!is_user_allowed(users, request.login))
     {
         build_response(response_buffer, sizeof(response_buffer), 1,
                        "user is not allowed");
         send(client_fd, response_buffer, strlen(response_buffer), 0);
+        log_error("user denied: %s", request.login);
         return 1;
     }
 
-    char command_result[RESULT_SIZE];
-    int command_code;
+    {
+        char command_result[RESULT_SIZE];
+        int command_code;
 
-    memset (command_result, 0, sizeof (command_result));
+        memset(command_result, 0, sizeof(command_result));
 
-    command_code = execute_command (request.command, command_result,
-                                    sizeof (command_result));
+        command_code = execute_command(request.command, command_result,
+                                       sizeof(command_result));
 
-    build_response (response_buffer, sizeof (response_buffer), command_code,
-                    command_result);
-    send (client_fd, response_buffer, strlen (response_buffer), 0);
+        build_response(response_buffer, sizeof(response_buffer), command_code,
+                       command_result);
+        send(client_fd, response_buffer, strlen(response_buffer), 0);
 
-    return command_code;
+        return command_code;
+    }
 }
 
-static int run_stream_server(int port, const struct user_list *users)
+static int reload_users(struct user_list *users)
+{
+    struct user_list new_users;
+
+    if (load_user_list(DEFAULT_USERS_PATH, &new_users) != 0)
+    {
+        log_error("failed to reload users whitelist");
+        return 1;
+    }
+
+    *users = new_users;
+    log_info("users whitelist reloaded");
+    return 0;
+}
+
+static int run_stream_server(int port, struct user_list *users)
 {
     int server_fd;
     int client_fd;
@@ -86,30 +164,24 @@ static int run_stream_server(int port, const struct user_list *users)
     struct sockaddr_in server_addr;
     struct sockaddr_in client_addr;
     socklen_t client_len;
-    struct sigaction sa;
 
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handle_sigchld;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-
-    if (sigaction(SIGCHLD, &sa, NULL) < 0)
+    if (setup_signals() != 0)
     {
-        perror("sigaction");
+        log_error("failed to setup signals");
         return 1;
     }
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
-        perror("socket");
+        log_error("socket failed");
         return 1;
     }
 
     opt = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
     {
-        perror("setsockopt");
+        log_error("setsockopt failed");
         close(server_fd);
         return 1;
     }
@@ -122,24 +194,29 @@ static int run_stream_server(int port, const struct user_list *users)
     if (bind(server_fd, (struct sockaddr *)&server_addr,
              sizeof(server_addr)) < 0)
     {
-        perror("bind");
+        log_error("bind failed");
         close(server_fd);
         return 1;
     }
 
     if (listen(server_fd, BACKLOG) < 0)
     {
-        perror("listen");
+        log_error("listen failed");
         close(server_fd);
         return 1;
     }
 
-    printf("myRPC-server parent pid %d listening on port %d\n",
-           getpid(), port);
+    log_info("server pid %d listening on port %d", getpid(), port);
 
-    while (1)
+    while (!need_stop)
     {
         pid_t pid;
+
+        if (need_reload)
+        {
+            need_reload = 0;
+            reload_users(users);
+        }
 
         client_len = sizeof(client_addr);
 
@@ -152,16 +229,16 @@ static int run_stream_server(int port, const struct user_list *users)
                 continue;
             }
 
-            perror("accept");
+            log_error("accept failed");
             continue;
         }
 
-        printf("client connected: %s\n", inet_ntoa(client_addr.sin_addr));
+        log_info("client connected: %s", inet_ntoa(client_addr.sin_addr));
 
         pid = fork();
         if (pid < 0)
         {
-            perror("fork");
+            log_error("fork failed");
             close(client_fd);
             continue;
         }
@@ -177,7 +254,15 @@ static int run_stream_server(int port, const struct user_list *users)
         close(client_fd);
     }
 
+    log_info("server stopping, waiting worker processes");
+
+    while (waitpid(-1, NULL, 0) > 0)
+    {
+    }
+
     close(server_fd);
+    log_info("server stopped");
+
     return 0;
 }
 
@@ -192,17 +277,36 @@ int main(void)
         return 1;
     }
 
+    log_init(config.log_file);
+
     if (load_user_list(DEFAULT_USERS_PATH, &users) != 0)
     {
-        fprintf(stderr, "Failed to load users whitelist\n");
+        log_error("failed to load users whitelist");
+        log_close();
         return 1;
+    }
+
+    if (config.daemon_mode)
+    {
+        log_info("daemon mode enabled");
+
+        if (daemonize_process() != 0)
+        {
+            log_error("failed to daemonize process");
+            log_close();
+            return 1;
+        }
     }
 
     if (config.socket_type != SOCKET_TYPE_STREAM)
     {
-        fprintf(stderr, "Only stream socket is implemented now\n");
+        log_error("only stream socket is implemented now");
+        log_close();
         return 1;
     }
 
-    return run_stream_server(config.port, &users);
+    run_stream_server(config.port, &users);
+
+    log_close();
+    return 0;
 }
