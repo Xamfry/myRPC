@@ -1,6 +1,7 @@
 #include "../common/config.h"
 #include "../common/protocol.h"
 #include "../common/users.h"
+#include "worker.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
@@ -62,11 +63,19 @@ static int handle_client(int client_fd, const struct user_list *users)
         return 1;
     }
 
-    build_response(response_buffer, sizeof(response_buffer), 0,
-                   "request accepted by worker process");
-    send(client_fd, response_buffer, strlen(response_buffer), 0);
+    char command_result[RESULT_SIZE];
+    int command_code;
 
-    return 0;
+    memset (command_result, 0, sizeof (command_result));
+
+    command_code = execute_command (request.command, command_result,
+                                    sizeof (command_result));
+
+    build_response (response_buffer, sizeof (response_buffer), command_code,
+                    command_result);
+    send (client_fd, response_buffer, strlen (response_buffer), 0);
+
+    return command_code;
 }
 
 static int run_stream_server(int port, const struct user_list *users)
