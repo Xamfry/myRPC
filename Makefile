@@ -3,7 +3,7 @@ CFLAGS = -Wall -Wextra -Werror -std=c11
 
 BIN_DIR = bin
 
-COMMON_SRC = src/common/config.c
+COMMON_SRC = src/common/config.c src/common/users.c
 CLIENT_SRC = src/client/main.c
 SERVER_SRC = src/server/main.c $(COMMON_SRC)
 
