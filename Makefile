@@ -27,4 +27,11 @@ clean:
 	rm -rf $(BIN_DIR)
 
 deb:
-	@echo "Deb package build will be added later"
+	rm -rf dist
+	mkdir -p dist
+	cp $(CLIENT_BIN) packaging/client/usr/bin/myRPC-client
+	cp $(SERVER_BIN) packaging/server/usr/bin/myRPC-server
+	chmod 755 packaging/client/usr/bin/myRPC-client
+	chmod 755 packaging/server/usr/bin/myRPC-server
+	dpkg-deb --build packaging/client dist/myrpc-client_1.0_amd64.deb
+	dpkg-deb --build packaging/server dist/myrpc-server_1.0_amd64.deb
