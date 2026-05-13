@@ -14,8 +14,7 @@ struct client_options
     char *command;
 };
 
-static void
-print_help(const char *program_name)
+static void print_help(const char *program_name)
 {
     printf("Usage: %s [OPTIONS]\n", program_name);
     printf("\n");
@@ -28,8 +27,7 @@ print_help(const char *program_name)
     printf("      --help             Show this help\n");
 }
 
-static int
-parse_arguments(int argc, char **argv, struct client_options *options)
+static int parse_arguments(int argc, char **argv, struct client_options *options)
 {
     int opt;
     int option_index = 0;
