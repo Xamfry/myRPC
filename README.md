@@ -78,6 +78,5 @@ myRPC-client -h 127.0.0.1 -p 1234 -s -c "whoami"
 ```text
 docs/architecture.md  архитектура
 docs/testing.md       тестирование
-docs/git-flow.md      работа с Git Flow
 docs/install.md       установка
 ```
